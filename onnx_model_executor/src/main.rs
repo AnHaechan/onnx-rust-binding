@@ -4,11 +4,13 @@
 use std::os::unix::ffi::OsStrExt;
 use std::{ffi::c_void, ptr::null};
 use onnxruntime_sys::*;
+use std::ptr::copy;
 
 struct Config {
     device: Device,
     graph_opt_level: GraphOptimizationLevel,
     onnx_model_path: String,
+    io_shape : IOShape,
 }
 
 enum Device {
@@ -17,24 +19,53 @@ enum Device {
     Cpu { enable_parallel_execution : bool }, 
 }
 
+struct IOShape {
+    // FIXME: now only support single-input, single-output
+    // but may have multiple inputs, such as `OnnxRuntime Resize`
+    input_shape: Vec<u64>,
+    output_shape: Vec<u64>,
+    out_name: String,
+}
+
 fn main() {
     // example configuration
     let config = Config {
         device: Device::Gpu { device_id: 0 },
         graph_opt_level: GraphOptimizationLevel::ORT_ENABLE_EXTENDED,
-        onnx_model_path: "squeezenet1.0-12.onnx".to_string(),
+        onnx_model_path:  "squeezenet1.0-12.onnx".to_string(),
+        io_shape : IOShape { 
+            input_shape: vec![1, 3, 224, 224], 
+            output_shape: vec![1, 1000, 1, 1], 
+            out_name: "softmaxout_1".to_string(), 
+        },
     };
 
     let config2 = Config {
         device: Device::Cpu { enable_parallel_execution: true },
         graph_opt_level: GraphOptimizationLevel::ORT_ENABLE_EXTENDED,
         onnx_model_path: "squeezenet1.0-12.onnx".to_string(),
+        io_shape : IOShape { 
+            input_shape: vec![1, 3, 224, 224], 
+            output_shape: vec![1, 1000, 1, 1],
+            out_name: "softmaxout_1".to_string(), 
+        },
     };
 
-    load_and_infer(config);
+    let config3 = Config {
+        device: Device::Gpu { device_id: 0 },
+        graph_opt_level: GraphOptimizationLevel::ORT_ENABLE_EXTENDED,
+        onnx_model_path: "CSPDarkNet53.onnx".to_string(),
+        io_shape: IOShape { 
+            input_shape: vec![1, 3, 256, 256], 
+            output_shape: vec![1, 1000],
+            out_name: "706_dequantized".to_string(),
+        },
+    };
+
+    let _ = load_and_infer(config);
 }
 
-fn load_and_infer(config: Config) {
+fn load_and_infer(config: Config) -> Vec<f32> {
     // Interface for onnx runtime settings
     let g_ort = unsafe { OrtGetApiBase().as_ref().unwrap().GetApi.unwrap()(ORT_API_VERSION) };
     assert_ne!(g_ort, std::ptr::null_mut());
@@ -157,7 +188,7 @@ fn load_and_infer(config: Config) {
     CheckStatus(g_ort, status).unwrap();
     assert_ne!(num_input_nodes, 0);
     let mut input_node_names: Vec<&str> = Vec::new();
-    let mut input_node_dims: Vec<i64> = Vec::new(); // simplify... this model has only 1 input node {1, 3, 224, 224}.
+    let mut input_node_dims: Vec<i64> = Vec::new(); // FIXME simplify... this model has only 1 input node {1, 3, 224, 224}.
                                                     // Otherwise need vector<vector<>>
 
     // Iterate over all input nodes to gather names, types, shapes
@@ -239,14 +270,21 @@ fn load_and_infer(config: Config) {
     // Use OrtSessionGetOutputCount(), OrtSessionGetOutputName()
     // OrtSessionGetOutputTypeInfo() as shown above.
 
-    // TODO : get output node names properly
-    let output_node_names = &["softmaxout_1"];
+    // FIXME : get output node names properly
+    let output_node_names = &[config.io_shape.out_name];
 
     //*************************************************************************
     // Score the model using sample data, and inspect values
-    let input_node_dims = vec![1, 3, 224, 224];
-    let input_tensor_size = 1 * 3 * 224 * 224; // simplify ... using known dim values to calculate size
-                                                    // use OrtGetTensorShapeElementCount() to get official size!
+    let input_node_dims = config.io_shape.input_shape
+        .iter()
+        .map(|v| *v as i64)
+        .collect::<Vec<_>>();
+
+    // FIXME : use OrtGetTensorShapeElementCount() to get official size!
+    let input_tensor_size: u64 = config.io_shape.input_shape
+        .iter()
+        .product();
+    let input_tensor_size = input_tensor_size as usize;
 
     // initialize input data with values in [0.0, 1.0]
     let mut input_tensor_values: Vec<f32> = (0..input_tensor_size)
@@ -325,8 +363,6 @@ fn load_and_infer(config: Config) {
     let output_node_names_ptr_ptr: *const *const i8 = output_node_names_ptr.as_ptr();
 
     // Run
-    let _input_node_names_cstring =
-        unsafe { std::ffi::CString::from_raw(input_node_names_ptr[0] as *mut i8) };
     let run_options_ptr: *const OrtRunOptions = std::ptr::null();
     let mut output_tensor_ptr: *mut OrtValue = std::ptr::null_mut();
     let output_tensor_ptr_ptr: *mut *mut OrtValue = &mut output_tensor_ptr;
@@ -362,10 +398,21 @@ fn load_and_infer(config: Config) {
     CheckStatus(g_ort, status).unwrap();
     assert_ne!(floatarr, std::ptr::null_mut());
 
-    // Print first five (TODO: print all)
-    let floatarr_vec: Vec<f32> = unsafe { Vec::from_raw_parts(floatarr, 5, 5) };
-    println!("{:?}", floatarr_vec);
-    std::mem::forget(floatarr_vec);
+    // Get output into vector
+    let output_len: u64 = config.io_shape.output_shape
+        .iter()
+        .product();
+    let output_len = output_len as usize;
+    
+    // let floatarr_vec: Vec<f32> = unsafe { Vec::from_raw_parts(floatarr, output_len, output_len) };
+    // std::mem::forget(floatarr_vec);
+    
+    // copy bit-wise, allowing c api to free right amount of memory
+    let mut output = Vec::with_capacity(output_len);
+    unsafe { 
+        copy(floatarr, output.as_mut_ptr(), output_len);
+        output.set_len(output_len);
+    }
 
     // Release the pointers
     unsafe { g_ort.as_ref().unwrap().ReleaseValue.unwrap()(output_tensor_ptr) };
@@ -375,6 +422,8 @@ fn load_and_infer(config: Config) {
     unsafe { g_ort.as_ref().unwrap().ReleaseEnv.unwrap()(env_ptr) };
 
     println!("Done!");
+
+    output
 }
 
 fn CheckStatus(g_ort: *const OrtApi, status: *const OrtStatus) -> Result<(), String> {
