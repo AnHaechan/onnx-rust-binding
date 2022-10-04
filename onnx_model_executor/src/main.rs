@@ -2,7 +2,7 @@
 // reference code: https://github.com/nbigaouette/onnxruntime-rs/blob/master/onnxruntime-sys/examples/c_api_sample.rs
 
 use std::os::unix::ffi::OsStrExt;
-use std::{ffi::c_void, ptr::null};
+use std::{ffi::c_void, os::raw::c_char, ptr::null};
 use onnxruntime_sys::*;
 use std::ptr::copy;
 
@@ -116,26 +116,65 @@ fn load_and_infer(config: Config) -> Vec<f32> {
         )
     };
 
-    // CUDA execution provider for Gpu
+    // // CUDA execution provider for Gpu
+    // if let Device::Gpu { device_id } = config.device {
+    //     let cuda_options: *const OrtCUDAProviderOptions = &OrtCUDAProviderOptions {
+    //         device_id,
+    //         cudnn_conv_algo_search: OrtCudnnConvAlgoSearch::EXHAUSTIVE,
+    //         gpu_mem_limit: usize::MAX,
+    //         arena_extend_strategy: 0,
+    //         do_copy_in_default_stream: 1,
+    //         has_user_compute_stream: 0,
+    //         user_compute_stream: null::<c_void>() as *mut c_void,
+    //         default_memory_arena_cfg: null::<OrtArenaCfg>() as *mut OrtArenaCfg,
+    //     };
+    
+    //     unsafe {
+    //         g_ort
+    //             .as_ref()
+    //             .unwrap()
+    //             .SessionOptionsAppendExecutionProvider_CUDA
+    //             .unwrap()(session_options_ptr, cuda_options);
+    //     };
+    // }
+
+    // TensorRT execution provider for Gpu 
+    // Use default value from https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html#environment-variables
     if let Device::Gpu { device_id } = config.device {
-        let cuda_options: *const OrtCUDAProviderOptions = &OrtCUDAProviderOptions {
+        let trt_options: *const OrtTensorRTProviderOptions = &OrtTensorRTProviderOptions {
             device_id,
-            cudnn_conv_algo_search: OrtCudnnConvAlgoSearch::EXHAUSTIVE,
-            gpu_mem_limit: usize::MAX,
-            arena_extend_strategy: 0,
-            do_copy_in_default_stream: 1,
             has_user_compute_stream: 0,
             user_compute_stream: null::<c_void>() as *mut c_void,
-            default_memory_arena_cfg: null::<OrtArenaCfg>() as *mut OrtArenaCfg,
+            trt_max_workspace_size: 2147483648,
+            trt_max_partition_iterations: 1000,
+            trt_min_subgraph_size: 1,
+            trt_fp16_enable: 0,
+            trt_int8_enable: 1, // Enable INT8 mode in TensorRT. Note not all Nvidia GPUs support INT8 precision.
+            trt_int8_calibration_table_name: null::<c_char>(), // calibration file for non-qdq models, as we're having Q/DQ nodes, we don't need it.
+            trt_int8_use_native_calibration_table: 1,
+            // use?
+            trt_dla_enable: 0, // Enable DLA(Deep Learning Accelerator) on GPU. Note not all Nvidia GPUs support DLA
+            trt_dla_core: 0,
+            //
+            // use?
+            trt_engine_cache_enable: 0, // Use engine caching to save engine build time
+            trt_engine_cache_path: null::<c_char>(),
+            //
+            trt_engine_decryption_enable: 0,
+            trt_engine_decryption_lib_path: null::<c_char>(),
+            // use?
+            trt_dump_subgraphs: 0, // dump subgraphs transfomred into trt format to the filesystem
+            //
+            trt_force_sequential_engine_build: 0,
         };
-    
+
         unsafe {
             g_ort
                 .as_ref()
                 .unwrap()
-                .SessionOptionsAppendExecutionProvider_CUDA
-                .unwrap()(session_options_ptr, cuda_options);
-        };
+                .SessionOptionsAppendExecutionProvider_TensorRT
+                .unwrap()(session_options_ptr, trt_options);
+        }
     }
 
     //*************************************************************************

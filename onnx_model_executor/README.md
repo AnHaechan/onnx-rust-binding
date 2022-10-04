@@ -1,1 +1,1 @@
-Need to set up environmental variables `ORT_USE_CUDA=1, ORT_STRATEGY=download`, before `cargo build`
+In Cargo.toml, under `[env]`, set `LD_LIBRARY_PATH` to point to the absolute path of `TensorRT<version>/lib`
