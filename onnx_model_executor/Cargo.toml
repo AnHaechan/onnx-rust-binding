@@ -9,4 +9,4 @@ edition = "2021"
 ORT_USE_CUDA = 1
 
 [dependencies]
-onnxruntime-sys = "0.0.14"
+onnxruntime-sys = { git = "https://github.com/AnHaechan/onnxruntime-rs.git", branch="hydraflow_inner" }
