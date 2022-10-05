@@ -149,7 +149,7 @@ fn load_and_infer(config: Config) -> Vec<f32> {
             trt_max_partition_iterations: 1000,
             trt_min_subgraph_size: 1,
             trt_fp16_enable: 0,
-            trt_int8_enable: 1, // Enable INT8 mode in TensorRT. Note not all Nvidia GPUs support INT8 precision.
+            trt_int8_enable: 0, // Enable INT8 mode in TensorRT. Note not all Nvidia GPUs support INT8 precision.
             trt_int8_calibration_table_name: null::<c_char>(), // calibration file for non-qdq models, as we're having Q/DQ nodes, we don't need it.
             trt_int8_use_native_calibration_table: 1,
             // use?
