@@ -2,15 +2,18 @@
 // reference code: https://github.com/nbigaouette/onnxruntime-rs/blob/master/onnxruntime-sys/examples/c_api_sample.rs
 
 use std::os::unix::ffi::OsStrExt;
-use std::{ffi::c_void, os::raw::c_char, ptr::null};
+use std::{ffi::c_void, ffi::CString, os::raw::c_char, ptr::null};
 use onnxruntime_sys::*;
 use std::ptr::copy;
+use std::time::Instant;
 
 struct Config {
     device: Device,
     graph_opt_level: GraphOptimizationLevel,
     onnx_model_path: String,
     io_shape : IOShape,
+    calib_table_and_engine_cache_path: CString,
+    calib_table_generated_by: CalibTableGeneratedBy,
 }
 
 enum Device {
@@ -27,42 +30,60 @@ struct IOShape {
     out_name: String,
 }
 
+enum CalibTableGeneratedBy {
+    OnnxRuntime,
+    TensorRT,
+}
+
 fn main() {
     // example configuration
-    let config = Config {
+    // let config = Config {
+    //     device: Device::Gpu { device_id: 0 },
+    //     graph_opt_level: GraphOptimizationLevel::ORT_ENABLE_EXTENDED,
+    //     onnx_model_path:  "squeezenet1.0-12.onnx".to_string(),
+    //     io_shape : IOShape { 
+    //         input_shape: vec![1, 3, 224, 224], 
+    //         output_shape: vec![1, 1000, 1, 1], 
+    //         out_name: "softmaxout_1".to_string(), 
+    //     },
+    // };
+
+    // let config2 = Config {
+    //     device: Device::Cpu { enable_parallel_execution: true },
+    //     graph_opt_level: GraphOptimizationLevel::ORT_ENABLE_EXTENDED,
+    //     onnx_model_path: "squeezenet1.0-12.onnx".to_string(),
+    //     io_shape : IOShape { 
+    //         input_shape: vec![1, 3, 224, 224], 
+    //         output_shape: vec![1, 1000, 1, 1],
+    //         out_name: "softmaxout_1".to_string(), 
+    //     },
+    // };
+
+    // let config3 = Config {
+    //     device: Device::Gpu { device_id: 0 },
+    //     graph_opt_level: GraphOptimizationLevel::ORT_ENABLE_EXTENDED,
+    //     onnx_model_path: "CSPDarkNet53.onnx".to_string(),
+    //     io_shape: IOShape { 
+    //         input_shape: vec![1, 3, 256, 256], 
+    //         output_shape: vec![1, 1000],
+    //         out_name: "706_dequantized".to_string(),
+    //     },
+    // };
+    
+    let config4 = Config {
         device: Device::Gpu { device_id: 0 },
         graph_opt_level: GraphOptimizationLevel::ORT_ENABLE_EXTENDED,
-        onnx_model_path:  "squeezenet1.0-12.onnx".to_string(),
-        io_shape : IOShape { 
-            input_shape: vec![1, 3, 224, 224], 
-            output_shape: vec![1, 1000, 1, 1], 
-            out_name: "softmaxout_1".to_string(), 
-        },
-    };
-
-    let config2 = Config {
-        device: Device::Cpu { enable_parallel_execution: true },
-        graph_opt_level: GraphOptimizationLevel::ORT_ENABLE_EXTENDED,
-        onnx_model_path: "squeezenet1.0-12.onnx".to_string(),
-        io_shape : IOShape { 
-            input_shape: vec![1, 3, 224, 224], 
-            output_shape: vec![1, 1000, 1, 1],
-            out_name: "softmaxout_1".to_string(), 
-        },
-    };
-
-    let config3 = Config {
-        device: Device::Gpu { device_id: 0 },
-        graph_opt_level: GraphOptimizationLevel::ORT_ENABLE_EXTENDED,
-        onnx_model_path: "CSPDarkNet53.onnx".to_string(),
+        onnx_model_path: "CSPDarkNet53_f32.onnx".to_string(),
         io_shape: IOShape { 
             input_shape: vec![1, 3, 256, 256], 
             output_shape: vec![1, 1000],
-            out_name: "706_dequantized".to_string(),
+            out_name: "771".to_string(),
         },
+        calib_table_and_engine_cache_path: CString::new("CSPDarkNet53_f32_cache").unwrap(),
+        calib_table_generated_by: CalibTableGeneratedBy::OnnxRuntime,
     };
 
-    let _ = load_and_infer(config);
+    let _ = load_and_infer(config4);
 }
 
 fn load_and_infer(config: Config) -> Vec<f32> {
@@ -149,23 +170,24 @@ fn load_and_infer(config: Config) -> Vec<f32> {
             trt_max_partition_iterations: 1000,
             trt_min_subgraph_size: 1,
             trt_fp16_enable: 0,
-            trt_int8_enable: 0, // Enable INT8 mode in TensorRT. Note not all Nvidia GPUs support INT8 precision.
-            trt_int8_calibration_table_name: null::<c_char>(), // calibration file for non-qdq models, as we're having Q/DQ nodes, we don't need it.
-            trt_int8_use_native_calibration_table: 1,
-            // use?
-            trt_dla_enable: 0, // Enable DLA(Deep Learning Accelerator) on GPU. Note not all Nvidia GPUs support DLA
+            trt_dla_enable: 0,
             trt_dla_core: 0,
-            //
-            // use?
-            trt_engine_cache_enable: 0, // Use engine caching to save engine build time
-            trt_engine_cache_path: null::<c_char>(),
-            //
+            trt_force_sequential_engine_build: 0,
+            // use or not? dump subgraphs transfomred into trt format to the filesystem
+            trt_dump_subgraphs: 0, 
+            // must use for i8 quantization
+            trt_int8_enable: 1,
+            trt_int8_calibration_table_name: null::<c_char>(),
+            trt_int8_use_native_calibration_table: 
+                match config.calib_table_generated_by {
+                    CalibTableGeneratedBy::TensorRT => 1,
+                    CalibTableGeneratedBy::OnnxRuntime => 0,
+                },
+            // must use for calibration table & engine caching
+            trt_engine_cache_enable: 1,
+            trt_engine_cache_path: config.calib_table_and_engine_cache_path.as_ptr(),
             trt_engine_decryption_enable: 0,
             trt_engine_decryption_lib_path: null::<c_char>(),
-            // use?
-            trt_dump_subgraphs: 0, // dump subgraphs transfomred into trt format to the filesystem
-            //
-            trt_force_sequential_engine_build: 0,
         };
 
         unsafe {
@@ -406,6 +428,7 @@ fn load_and_infer(config: Config) -> Vec<f32> {
     let mut output_tensor_ptr: *mut OrtValue = std::ptr::null_mut();
     let output_tensor_ptr_ptr: *mut *mut OrtValue = &mut output_tensor_ptr;
 
+    let time = Instant::now();
     let status = unsafe {
         g_ort.as_ref().unwrap().Run.unwrap()(
             session_ptr,
@@ -418,6 +441,7 @@ fn load_and_infer(config: Config) -> Vec<f32> {
             output_tensor_ptr_ptr,
         )
     };
+    println!("elapsed time {:?}", time.elapsed());
     CheckStatus(g_ort, status).unwrap();
     assert_ne!(output_tensor_ptr, std::ptr::null_mut());
 
