@@ -177,7 +177,7 @@ fn load_and_infer(config: Config) -> Vec<f32> {
             trt_dump_subgraphs: 0, 
             // must use for i8 quantization
             trt_int8_enable: 1,
-            trt_int8_calibration_table_name: null::<c_char>(),
+            trt_int8_calibration_table_name: CString::new("calibration.flatbuffers").unwrap().into_raw(),
             trt_int8_use_native_calibration_table: 
                 match config.calib_table_generated_by {
                     CalibTableGeneratedBy::TensorRT => 1,

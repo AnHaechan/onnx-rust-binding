@@ -41,7 +41,6 @@ if __name__ == "__main__":
     data_reader = CSPDarkNet53DataReader(input_name, input_shape)
     calibrator.collect_data(data_reader)
 
-    os.mkdir("CSPDarkNet53")
     os.chdir("CSPDarkNet53")
     quant.write_calibration_table(calibrator.compute_range())
     os.chdir("..")
