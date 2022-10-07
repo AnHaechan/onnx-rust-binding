@@ -33,14 +33,26 @@ class CSPDarkNet53DataReader(quant.CalibrationDataReader):
         else:
             return None
 
-if __name__ == "__main__":
-    model_path = "CSPDarkNet53_f32.onnx"
+def generate_calib_table(model_name):
+    model_path = f"f32_models/{model_name}/model.onnx"
     input_name, input_shape = get_input_name_shape(model_path)
     calibrator = quant.create_calibrator(model_path)
     calibrator.set_execution_providers(["CUDAExecutionProvider"])
     data_reader = CSPDarkNet53DataReader(input_name, input_shape)
     calibrator.collect_data(data_reader)
 
-    os.chdir("CSPDarkNet53")
+    os.chdir(f"f32_models/{model_name}")
     quant.write_calibration_table(calibrator.compute_range())
-    os.chdir("..")
+    os.remove("calibration.cache")
+    os.remove("calibration.json")
+    os.chdir("../..")
+
+if __name__ == "__main__":
+    models = ["CSPDarkNet53", "DLA169", "FCNResNet50", "RegNetX_64GF", "SEResNeXt101_32x4d"]
+    
+    # no f32 models available yet
+    models_todo = ["RegNetX_320GF", "ResNet20s0", "EDSRx2r32c256"]
+    
+    for model in models:
+        generate_calib_table(model)
+    os.remove("/augmented_model.onnx")
